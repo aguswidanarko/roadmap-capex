@@ -1,4 +1,10 @@
-const Database = require('better-sqlite3');
+// Uses Node's built-in SQLite (node:sqlite) instead of the native better-sqlite3
+// module. This avoids native-addon compilation entirely, which sidesteps
+// prebuilt-binary/ABI mismatches on hosts like Render where the build and
+// runtime environments can differ. A thin compatibility shim below keeps the
+// rest of the codebase (db.prepare(...).run/get/all, db.transaction(fn))
+// unchanged from the better-sqlite3-style API used throughout the routes.
+const { DatabaseSync } = require('node:sqlite');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
@@ -9,9 +15,55 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'capex.db');
 const isNew = !fs.existsSync(DB_PATH);
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const rawDb = new DatabaseSync(DB_PATH);
+rawDb.exec('PRAGMA journal_mode = WAL');
+rawDb.exec('PRAGMA foreign_keys = ON');
+
+// node:sqlite throws on named bind parameters that aren't referenced in the
+// SQL text (better-sqlite3 silently ignores extra object keys), so filter
+// the params object down to only the names actually used in each statement.
+function filterNamedParams(sql, paramsObj) {
+  const used = new Set();
+  const re = /[@:$]([A-Za-z_][A-Za-z0-9_]*)/g;
+  let m;
+  while ((m = re.exec(sql))) used.add(m[1]);
+  const filtered = {};
+  for (const k of Object.keys(paramsObj)) {
+    if (used.has(k)) filtered[k] = paramsObj[k];
+  }
+  return filtered;
+}
+
+function isPlainParamsObject(args) {
+  return args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]);
+}
+
+function wrapStatement(sql, stmt) {
+  function adaptArgs(args) {
+    return isPlainParamsObject(args) ? [filterNamedParams(sql, args[0])] : args;
+  }
+  return {
+    run: (...args) => stmt.run(...adaptArgs(args)),
+    get: (...args) => stmt.get(...adaptArgs(args)),
+    all: (...args) => stmt.all(...adaptArgs(args)),
+  };
+}
+
+const db = {
+  exec: (sql) => rawDb.exec(sql),
+  prepare: (sql) => wrapStatement(sql, rawDb.prepare(sql)),
+  transaction: (fn) => (...args) => {
+    rawDb.exec('BEGIN');
+    try {
+      const result = fn(...args);
+      rawDb.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try { rawDb.exec('ROLLBACK'); } catch (_) { /* ignore */ }
+      throw err;
+    }
+  },
+};
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
