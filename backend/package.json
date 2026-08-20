@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "build:web": "cd ../web-dashboard && rm -f package-lock.json && npm install && npm run build && rm -rf ../backend/public && cp -r dist ../backend/public",
+    "build:web": "cd ../web-dashboard && rm -f package-lock.json && npm install && npm install && npm run build && rm -rf ../backend/public && cp -r dist ../backend/public",
     "serve:all": "npm run build:web && npm start"
   },
   "keywords": [],
