@@ -18,9 +18,26 @@ capex-roadmap/
 └── mobile-app/        React (Vite) PWA — aplikasi lapangan offline-first
 ```
 
-## Menjalankan (development)
+## Menjalankan Web Dashboard — cara tercepat (1 perintah, 1 port)
 
-Butuh Node.js 18+.
+Butuh Node.js 18+. Backend bisa menyajikan Web Dashboard yang sudah di-build sekaligus dari port
+yang sama, jadi tidak perlu 2 terminal:
+
+```bash
+cd backend
+npm install
+npm run serve:all
+```
+
+Buka `http://localhost:4000` — Dashboard Web langsung bisa dipakai (login, dsb).
+`npm run serve:all` = build Web Dashboard lalu jalankan backend yang menyajikan keduanya.
+
+**Ingin online (bisa diakses dari mana saja / HP tanpa setup lokal)?** Lihat `DEPLOY_RENDER.md` —
+panduan deploy gratis ke Render.com (tanpa kartu kredit), sekitar 10 menit.
+
+## Menjalankan untuk development (hot-reload terpisah)
+
+Berguna kalau Anda mau mengedit source code dan langsung lihat perubahannya:
 
 ```bash
 # 1. Backend (port 4000) — otomatis membuat & mengisi database SQLite saat pertama kali dijalankan
