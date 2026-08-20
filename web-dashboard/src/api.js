@@ -1,6 +1,11 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// In dev (vite dev server on :5173) default to the separate backend on :4000.
+// In a production build, default to '' (relative) so the SPA works no matter what domain
+// it's served from — this lets the backend serve the built dashboard itself on one origin/port.
+const API_URL = import.meta.env.VITE_API_URL !== undefined
+  ? import.meta.env.VITE_API_URL
+  : (import.meta.env.DEV ? 'http://localhost:4000' : '');
 
 export const CATEGORY_META = {
   BN: { label: 'Bangun Baru', color: '#2563eb' },
