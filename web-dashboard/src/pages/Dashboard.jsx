@@ -1,34 +1,32 @@
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
-import api, { CATEGORY_META, CATEGORY_ORDER } from '../api';
-import CategoryBadge from '../components/CategoryBadge';
-import MiniMap from '../components/MiniMap';
-
-const ICONS = {
-  Rumah: '🏠', Mess: '🏢', Kantor: '🏛', Gudang: '📦', Traksi: '🚜', 'Rumah Ibadah': '🕌',
-  Sekolah: '🏫', 'Fasilitas Kesehatan': '⛑', 'Fasilitas Anak': '🧒', 'Fasilitas Olahraga': '⚽',
-  'Fasilitas Kantor': '🗂', 'Fasilitas Koperasi': '🛒', 'Instalasi Listrik': '⚡', 'Instalasi Air Bersih': '🚰',
-};
+import api from '../api';
+import { useFilters } from '../context/FilterContext';
+import RegionPtFilter from '../components/RegionPtFilter';
+import Slideshow from '../components/Slideshow';
 
 export default function Dashboard() {
+  const { params, region, pt } = useFilters();
   const [home, setHome] = useState(null);
   const [summary, setSummary] = useState(null);
   const [photos, setPhotos] = useState([]);
-  const [buildings, setBuildings] = useState([]);
+  const [maps, setMaps] = useState([]);
 
   useEffect(() => {
-    api.get('/home').then((r) => setHome(r.data));
-    api.get('/roadmap/summary').then((r) => setSummary(r.data));
-    api.get('/photos/latest?limit=6').then((r) => setPhotos(r.data));
-    api.get('/buildings?limit=500').then((r) => setBuildings(r.data.items));
-  }, []);
+    api.get('/home', { params }).then((r) => setHome(r.data));
+    api.get('/roadmap/summary', { params }).then((r) => setSummary(r.data));
+    api.get('/photos/featured', { params }).then((r) => setPhotos(r.data));
+    api.get('/campus-maps/preview/slideshow', { params }).then((r) => setMaps(r.data));
+  }, [region, pt]);
 
   if (!home || !summary) return <div className="empty-state">Memuat data…</div>;
 
-  const catData = CATEGORY_ORDER.map((code) => ({ code, label: CATEGORY_META[code].label, value: summary.category_summary[code] || 0, color: CATEGORY_META[code].color }));
+  const photoItems = photos.map((p) => ({ ...p, __caption: `${p.capital || 'Foto'}${p.blok ? ' · ' + p.blok : ''}` }));
+  const mapItems = maps.map((m) => ({ ...m, __caption: `${m.title || m.blok} · ${m.kebun}` }));
 
   return (
     <div>
+      <RegionPtFilter />
+
       {home.alerts.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           {home.alerts.map((a, i) => (
@@ -39,7 +37,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-4">
+      <div className="grid grid-5">
         <div className="kpi-tile">
           <div className="kpi-label">Existing (TD 2025)</div>
           <div className="kpi-value">{home.kpi.existing.toLocaleString('id-ID')}</div>
@@ -56,79 +54,92 @@ export default function Dashboard() {
           <div className="kpi-sub">proyeksi akhir project</div>
         </div>
         <div className="kpi-tile">
-          <div className="kpi-label">Progress Pembangunan</div>
-          <div className="kpi-value">{home.kpi.progress_unit} unit</div>
-          <div className="kpi-sub">{home.kpi.progress_percent}% dari program berjalan</div>
+          <div className="kpi-label">Progress Pembangunan BN &amp; BB</div>
+          <div className="kpi-value">{home.kpi.progress_bn_bb.unit.toLocaleString('id-ID')} unit</div>
+          <div className="kpi-sub">{home.kpi.progress_bn_bb.percent}% dari program berjalan</div>
+        </div>
+        <div className="kpi-tile">
+          <div className="kpi-label">Progress Pembangunan All</div>
+          <div className="kpi-value">{home.kpi.progress_all.unit.toLocaleString('id-ID')}</div>
+          <div className="kpi-sub">{home.kpi.progress_all.percent}% dari program berjalan</div>
         </div>
       </div>
 
-      <div className="grid grid-2" style={{ marginTop: 16, alignItems: 'stretch' }}>
+      <div className="dashboard-windows" style={{ marginTop: 16 }}>
         <div className="card">
-          <p className="card-title">Category Summary (Kategori Pelaksanaan)</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={catData} layout="vertical" margin={{ left: 10, right: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-              <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
-              <YAxis type="category" dataKey="code" width={36} tick={{ fontSize: 12, fontWeight: 700 }} />
-              <Tooltip formatter={(v, n, p) => [`${v} unit`, p.payload.label]} />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
-                {catData.map((d) => <Cell key={d.code} fill={d.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="legend-row" style={{ marginTop: 6 }}>
-            {catData.map((d) => (
-              <span className="legend-item" key={d.code}><span className="dot" style={{ background: d.color }} />{d.code} {d.label}</span>
-            ))}
+          <p className="card-title">Jumlah Bangunan per Jenis &middot; Kategori Pelaksanaan</p>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table kategori-table">
+              <thead>
+                <tr>
+                  <th rowSpan={2}>No.</th>
+                  <th rowSpan={2}>Jenis Bangunan</th>
+                  <th rowSpan={2}>Existing<br />TD 2025</th>
+                  <th colSpan={5} className="group-head">Kategori (Pelaksanaan)</th>
+                  <th rowSpan={2}>Estimasi<br />2030</th>
+                </tr>
+                <tr>
+                  <th className="group-bn">Bangun<br />(BN)</th>
+                  <th className="group-ex">Existing<br />(EX)</th>
+                  <th className="group-af">Alih Fungsi<br />(AF)</th>
+                  <th className="group-br">Bongkar<br />(BR)</th>
+                  <th className="group-bb">Bongkar<br />Bangun (BB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.by_type.map((r) => (
+                  <tr key={r.no}>
+                    <td>{r.no}</td>
+                    <td>{r.jenis_bangunan}</td>
+                    <td>{r.existing_td2025 || '-'}</td>
+                    <td>{r.bn || '-'}</td>
+                    <td>{r.ex || '-'}</td>
+                    <td>{r.af || '-'}</td>
+                    <td>{r.br || '-'}</td>
+                    <td>{r.bb || '-'}</td>
+                    <td>{r.estimasi_2030 || '-'}</td>
+                  </tr>
+                ))}
+                {summary.by_type.length === 0 && (
+                  <tr><td colSpan={9}><div className="empty-state">Tidak ada data untuk filter region/PT ini.</div></td></tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={2}>Total</td>
+                  <td>{summary.totals.existing_td2025}</td>
+                  <td>{summary.totals.bn}</td>
+                  <td>{summary.totals.ex}</td>
+                  <td>{summary.totals.af}</td>
+                  <td>{summary.totals.br}</td>
+                  <td>{summary.totals.bb}</td>
+                  <td>{summary.totals.estimasi_2030}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </div>
 
-        <div className="card">
-          <p className="card-title">Map Snapshot &middot; Pondok 1 (Rayon A Afd II)</p>
-          <MiniMap buildings={buildings} height={220} />
-        </div>
-      </div>
-
-      <div className="card">
-        <p className="card-title">Roadmap by Type (2026&ndash;2030)</p>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Jenis Bangunan</th><th>Existing TD 2025</th><th>2026</th><th>2027</th><th>2028</th><th>2029</th><th>2030</th><th>Total Program</th><th>Estimasi 2030</th>
-            </tr>
-          </thead>
-          <tbody>
-            {summary.by_type.map((r) => (
-              <tr key={r.id}>
-                <td>{ICONS[r.jenis_bangunan] || '🏗'} {r.jenis_bangunan}</td>
-                <td>{r.existing_td2025}</td><td>{r.y2026 || '–'}</td><td>{r.y2027 || '–'}</td><td>{r.y2028 || '–'}</td>
-                <td>{r.y2029 || '–'}</td><td>{r.y2030 || '–'}</td><td>{r.total_program}</td><td>{r.estimasi_2030}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Total</td><td>{summary.totals.existing_td2025}</td><td>{summary.totals.y2026}</td><td>{summary.totals.y2027}</td>
-              <td>{summary.totals.y2028}</td><td>{summary.totals.y2029}</td><td>{summary.totals.y2030}</td>
-              <td>{summary.totals.total_program}</td><td>{summary.totals.estimasi_2030}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <div className="card">
-        <p className="card-title">Foto Terbaru</p>
-        {photos.length === 0 ? (
-          <div className="empty-state">Belum ada foto ter-upload. Upload foto lewat halaman Bangunan atau aplikasi Mobile.</div>
-        ) : (
-          <div className="photo-grid">
-            {photos.map((p) => (
-              <div className="photo-tile" key={p.id} title={`${p.capital} · No. Unit ${p.no_unit}`}>
-                <img src={p.data_url} alt={p.capital} />
-              </div>
-            ))}
+        <div className="dashboard-side">
+          <div className="card">
+            <p className="card-title">Slideshow Peta Kampus</p>
+            <Slideshow
+              items={mapItems}
+              to="/peta"
+              emptyText="Belum ada peta kampus ter-upload. Buka halaman Peta Kampus untuk mengunggah."
+              renderFrame={() => <span className="slideshow-doc-icon">🗺</span>}
+            />
           </div>
-        )}
+          <div className="card">
+            <p className="card-title">Slideshow Foto Bangunan</p>
+            <Slideshow
+              items={photoItems}
+              to="/foto"
+              emptyText="Belum ada foto unggulan. Admin dapat memilih hingga 8 foto di halaman Foto."
+              renderFrame={(p) => <img src={p.data_url} alt={p.capital || 'Foto bangunan'} />}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

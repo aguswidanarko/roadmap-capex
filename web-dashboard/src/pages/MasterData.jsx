@@ -15,8 +15,8 @@ export default function MasterData() {
 
   function downloadTemplate() {
     const sample = [{
-      kebun: 'KAL', rayon: 'A', afdeling: 'II', blok: 'B44B', no_unit: '64', capital: 'Rumah G4', building_type: 'Rumah',
-      unit_count: 1, pintu: 4, tahun_bangun: 2026, category_code: 'BN', roadmap_year: 2026, estimasi_unit: 1, estimasi_pintu: 4,
+      region: 'Region Kalbar', pt: 'PT. XXX', kebun: 'KAL', rayon: 'A', afdeling: 'II', blok: 'B44B', no_unit: '64', capital: 'Rumah G4', building_type: 'Rumah',
+      unit_count: 1, pintu: 4, tahun_bangun: 2026, category_code: 'BN', roadmap_year: 2026, biaya: 250000000, estimasi_unit: 1, estimasi_pintu: 4,
       latitude: -0.8412, longitude: 115.8805, progress_value: 0, progress_date: '', progress_note: '',
     }];
     const ws = XLSX.utils.json_to_sheet(sample);
