@@ -40,7 +40,10 @@ export default function Home() {
             <div className="kpi-tile"><div className="kpi-label">Existing</div><div className="kpi-value">{home.kpi.existing}</div></div>
             <div className="kpi-tile"><div className="kpi-label">Rencana</div><div className="kpi-value">{home.kpi.rencana}</div></div>
             <div className="kpi-tile"><div className="kpi-label">Estimasi 2030</div><div className="kpi-value">{home.kpi.estimasi}</div></div>
-            <div className="kpi-tile"><div className="kpi-label">Progress</div><div className="kpi-value">{home.kpi.progress_percent}%</div></div>
+            <div className="kpi-tile"><div className="kpi-label">Progress All</div><div className="kpi-value">{home.kpi.progress_all?.percent ?? home.kpi.progress_percent}%</div></div>
+            {home.kpi.progress_bn_bb && (
+              <div className="kpi-tile"><div className="kpi-label">Progress BN &amp; BB</div><div className="kpi-value">{home.kpi.progress_bn_bb.percent}%</div></div>
+            )}
           </div>
 
           <div className="card">

@@ -60,6 +60,7 @@ export default function Buildings() {
             <div>
               <div className="bname">No. {b.no_unit} &middot; {b.capital}</div>
               <div className="bmeta">{b.kebun}/{b.rayon}/{b.afdeling}/{b.blok} &middot; {b.progress_value ?? 0}%</div>
+              {(b.region || b.pt) && <div className="bmeta" style={{ opacity: .7 }}>{[b.region, b.pt].filter(Boolean).join(' · ')}</div>}
             </div>
             <div style={{ textAlign: 'right' }}>
               <CategoryBadge code={b.category_code} />
