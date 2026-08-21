@@ -2,6 +2,8 @@ const express = require('express');
 const crypto = require('crypto');
 const { db, logAudit } = require('./db');
 const { requireAuth, requireRole } = require('./auth');
+const { lookupKebunMeta } = require('./kebunMeta');
+const { normalizeJenisBangunan } = require('./jenisBangunanRemap');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -23,22 +25,24 @@ router.post('/sync/batch', (req, res) => {
           const p = rec.payload || {};
           const existing = db.prepare('SELECT id FROM buildings WHERE uuid = ?').get(rec.record_uuid);
           if (rec.operation === 'CREATE' || !existing) {
+            const meta = lookupKebunMeta(p.kebun);
             const insertStmt = db.prepare(`INSERT INTO buildings
-              (uuid, no_unit, kebun, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
-               tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, keterangan_af,
+              (uuid, no_unit, kebun, region, pt, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
+               tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, biaya, keterangan_af,
                latitude, longitude, accuracy, progress_value, progress_date, progress_note, source, created_by, updated_by)
-              VALUES (@uuid,@no_unit,@kebun,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
-               @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@keterangan_af,
+              VALUES (@uuid,@no_unit,@kebun,@region,@pt,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
+               @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@biaya,@keterangan_af,
                @latitude,@longitude,@accuracy,@progress_value,@progress_date,@progress_note,'MOBILE',@created_by,@updated_by)
               ON CONFLICT(uuid) DO NOTHING`);
             insertStmt.run({
-              uuid: rec.record_uuid, no_unit: p.no_unit || null, kebun: p.kebun || null, rayon: p.rayon || null,
-              afdeling: p.afdeling || null, blok: p.blok || null, capital: p.capital || null,
-              building_type: p.building_type || null, subtype: p.subtype || null,
+              uuid: rec.record_uuid, no_unit: p.no_unit || null, kebun: p.kebun || null,
+              region: p.region || meta.region || null, pt: p.pt || meta.pt || null,
+              rayon: p.rayon || null, afdeling: p.afdeling || null, blok: p.blok || null, capital: p.capital || null,
+              building_type: normalizeJenisBangunan(p.building_type) || null, subtype: p.subtype || null,
               unit_count: p.unit_count ?? 1, pintu: p.pintu ?? 0, tahun_bangun: p.tahun_bangun || null,
               category_code: p.category_code || 'EX', estimasi_capital: p.estimasi_capital || p.capital || null,
               estimasi_unit: p.estimasi_unit ?? p.unit_count ?? 1, estimasi_pintu: p.estimasi_pintu ?? p.pintu ?? 0,
-              roadmap_year: p.roadmap_year || null, keterangan_af: p.keterangan_af || null,
+              roadmap_year: p.roadmap_year || null, biaya: p.biaya ?? 0, keterangan_af: p.keterangan_af || null,
               latitude: p.latitude ?? null, longitude: p.longitude ?? null, accuracy: p.accuracy ?? null,
               progress_value: p.progress_value ?? 0, progress_date: p.progress_date || null, progress_note: p.progress_note || null,
               created_by: rec.user || device || 'mobile', updated_by: rec.user || device || 'mobile',
@@ -55,7 +59,7 @@ router.post('/sync/batch', (req, res) => {
                 category_code=@category_code, roadmap_year=@roadmap_year, latitude=@latitude, longitude=@longitude, accuracy=@accuracy,
                 progress_value=@progress_value, progress_date=@progress_date, progress_note=@progress_note,
                 updated_by=@updated_by, updated_at=datetime('now')
-                WHERE uuid=@uuid`).run({ ...p, uuid: rec.record_uuid, updated_by: rec.user || device || 'mobile' });
+                WHERE uuid=@uuid`).run({ ...p, building_type: normalizeJenisBangunan(p.building_type), uuid: rec.record_uuid, updated_by: rec.user || device || 'mobile' });
             }
           }
           if (status !== 'Conflict') {
@@ -64,11 +68,13 @@ router.post('/sync/batch', (req, res) => {
           }
         } else if (rec.entity === 'photos') {
           const p = rec.payload || {};
-          const building = db.prepare('SELECT id FROM buildings WHERE uuid = ?').get(p.building_uuid);
+          const building = db.prepare('SELECT id, kebun, region, pt, blok FROM buildings WHERE uuid = ?').get(p.building_uuid);
           if (!building) { status = 'Failed'; error = 'Referenced building not found on server'; }
           else {
-            db.prepare(`INSERT INTO photos (building_id, data_url, latitude, longitude, uploaded_by, source) VALUES (?,?,?,?,?,'MOBILE')`)
-              .run(building.id, p.data_url, p.latitude || null, p.longitude || null, rec.user || device || 'mobile');
+            db.prepare(`INSERT INTO photos (building_id, kebun, region, pt, blok, data_url, latitude, longitude, uploaded_by, source)
+              VALUES (?,?,?,?,?,?,?,?,?,'MOBILE')`)
+              .run(building.id, building.kebun, building.region, building.pt, building.blok,
+                p.data_url, p.latitude || null, p.longitude || null, rec.user || device || 'mobile');
             status = 'Success';
           }
         } else {

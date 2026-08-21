@@ -10,6 +10,7 @@ const masterRoutes = require('./routesMaster');
 const syncRoutes = require('./routesSync');
 const reportsRoutes = require('./routesReports');
 const miscRoutes = require('./routesMisc');
+const campusMapsRoutes = require('./routesCampusMaps');
 
 const app = express();
 app.use(cors());
@@ -35,6 +36,7 @@ app.use(masterRoutes);
 app.use(syncRoutes);
 app.use(reportsRoutes);
 app.use(miscRoutes);
+app.use(campusMapsRoutes);
 
 // SPA fallback — registered AFTER every API router, so it only ever catches a GET that no API
 // route matched (e.g. a hard refresh on the frontend's HashRouter, which only ever requests "/").

@@ -9,6 +9,8 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const fs = require('fs');
 const { roadmapTypeSummary, categorySummary, subtypeBreakdown, buildPondok1Buildings } = require('./seedData');
+const { lookupKebunMeta } = require('./kebunMeta');
+const { JENIS_BANGUNAN_REMAP } = require('./jenisBangunanRemap');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -80,7 +82,7 @@ CREATE TABLE IF NOT EXISTS buildings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid TEXT UNIQUE,
   no_unit TEXT,
-  kebun TEXT, rayon TEXT, afdeling TEXT, blok TEXT,
+  kebun TEXT, region TEXT, pt TEXT, rayon TEXT, afdeling TEXT, blok TEXT,
   capital TEXT,
   building_type TEXT,
   subtype TEXT,
@@ -90,6 +92,7 @@ CREATE TABLE IF NOT EXISTS buildings (
   category_code TEXT CHECK(category_code IN ('BN','EX','AF','BR','BB')),
   estimasi_capital TEXT, estimasi_unit INTEGER, estimasi_pintu INTEGER,
   roadmap_year INTEGER,
+  biaya REAL DEFAULT 0,
   keterangan_af TEXT,
   latitude REAL, longitude REAL, accuracy REAL,
   progress_value REAL DEFAULT 0,
@@ -105,11 +108,27 @@ CREATE TABLE IF NOT EXISTS buildings (
 CREATE TABLE IF NOT EXISTS photos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   building_id INTEGER REFERENCES buildings(id),
+  kebun TEXT, region TEXT, pt TEXT, blok TEXT,
+  title TEXT,
   data_url TEXT,
   captured_at TEXT DEFAULT (datetime('now')),
   latitude REAL, longitude REAL,
   uploaded_by TEXT,
-  source TEXT DEFAULT 'WEB'
+  source TEXT DEFAULT 'WEB',
+  featured INTEGER DEFAULT 0,
+  featured_order INTEGER,
+  deleted INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS campus_maps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kebun TEXT, region TEXT, pt TEXT, rayon TEXT, afdeling TEXT, blok TEXT,
+  title TEXT,
+  file_data_url TEXT,
+  mime_type TEXT,
+  uploaded_by TEXT,
+  uploaded_at TEXT DEFAULT (datetime('now')),
+  deleted INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS roadmap_type_summary (
@@ -161,6 +180,65 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `);
 
+// --- Migration: bring an already-deployed database (created before region/pt/biaya
+// and the photos/campus_maps additions existed) up to the current schema. CREATE TABLE
+// IF NOT EXISTS above never adds columns to a table that already exists, so any column
+// added after the app first went live needs an explicit ALTER TABLE here. Safe to run on
+// every boot: each ALTER is skipped once the column is present.
+function columnExists(table, column) {
+  return rawDb.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+function addColumnIfMissing(table, column, definition) {
+  if (columnExists(table, column)) return false;
+  rawDb.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
+}
+
+const addedRegionOrPt = [
+  addColumnIfMissing('buildings', 'region', 'TEXT'),
+  addColumnIfMissing('buildings', 'pt', 'TEXT'),
+].some(Boolean);
+addColumnIfMissing('buildings', 'biaya', 'REAL DEFAULT 0');
+addColumnIfMissing('photos', 'kebun', 'TEXT');
+addColumnIfMissing('photos', 'region', 'TEXT');
+addColumnIfMissing('photos', 'pt', 'TEXT');
+addColumnIfMissing('photos', 'blok', 'TEXT');
+addColumnIfMissing('photos', 'title', 'TEXT');
+addColumnIfMissing('photos', 'featured', 'INTEGER DEFAULT 0');
+addColumnIfMissing('photos', 'featured_order', 'INTEGER');
+addColumnIfMissing('photos', 'deleted', 'INTEGER DEFAULT 0');
+
+if (addedRegionOrPt) {
+  console.log('Backfilling region/pt on existing buildings rows from kebunMeta...');
+  const distinctKebun = rawDb.prepare('SELECT DISTINCT kebun FROM buildings').all();
+  const upd = rawDb.prepare('UPDATE buildings SET region = COALESCE(region, ?), pt = COALESCE(pt, ?) WHERE kebun = ?');
+  for (const { kebun } of distinctKebun) {
+    const meta = lookupKebunMeta(kebun);
+    upd.run(meta.region, meta.pt, kebun);
+  }
+}
+// Backfill photos' denormalized location columns from their linked building, best-effort
+// (only touches rows where kebun is still NULL, so this is a no-op after the first run).
+rawDb.exec(`UPDATE photos SET
+  kebun = (SELECT kebun FROM buildings WHERE buildings.id = photos.building_id),
+  region = (SELECT region FROM buildings WHERE buildings.id = photos.building_id),
+  pt = (SELECT pt FROM buildings WHERE buildings.id = photos.building_id),
+  blok = (SELECT blok FROM buildings WHERE buildings.id = photos.building_id)
+  WHERE building_id IS NOT NULL AND kebun IS NULL`);
+
+// Normalize free-text building_type labels from document-derived imports (e.g. the PT. SAM 2
+// campus map conversion) onto the app's canonical 21-item "Jenis Bangunan" taxonomy, so the
+// dashboard/roadmap aggregate tables group them correctly instead of showing them as stray
+// extra rows. This only catches rows already in the database at boot time — routesMaster.js
+// and routesBuildings.js apply the same map at insert/update time so later imports/edits are
+// normalized immediately too (see ./jenisBangunanRemap.js). Idempotent either way: once a
+// row's building_type is remapped it no longer matches the WHERE clause. The specific
+// facility name is preserved in `capital`.
+{
+  const remapStmt = rawDb.prepare('UPDATE buildings SET building_type = ? WHERE building_type = ?');
+  for (const [from, to] of Object.entries(JENIS_BANGUNAN_REMAP)) remapStmt.run(to, from);
+}
+
 function logAudit({ entity, recordId, action, oldValue, newValue, user, source }) {
   db.prepare(`INSERT INTO audit_log (entity, record_id, action, old_value, new_value, user, source)
     VALUES (?,?,?,?,?,?,?)`).run(entity, String(recordId), action,
@@ -196,17 +274,18 @@ if (isNew) {
 
   const seedBuildings = db.transaction(() => {
     const stmt = db.prepare(`INSERT INTO buildings
-      (uuid, no_unit, kebun, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
-       tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, keterangan_af,
+      (uuid, no_unit, kebun, region, pt, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
+       tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, biaya, keterangan_af,
        latitude, longitude, accuracy, progress_value, progress_date, progress_note, source, created_by)
-      VALUES (@uuid,@no_unit,@kebun,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
-       @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@keterangan_af,
+      VALUES (@uuid,@no_unit,@kebun,@region,@pt,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
+       @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@biaya,@keterangan_af,
        @latitude,@longitude,@accuracy,@progress_value,@progress_date,@progress_note,@source,@created_by)`);
     const buildings = buildPondok1Buildings();
     let i = 0;
     for (const b of buildings) {
       i += 1;
-      stmt.run({ ...b, uuid: `pondok1-${String(i).padStart(3, '0')}` });
+      const meta = lookupKebunMeta(b.kebun);
+      stmt.run({ ...b, uuid: `pondok1-${String(i).padStart(3, '0')}`, region: meta.region, pt: meta.pt, biaya: b.biaya ?? 0 });
     }
   });
   seedBuildings();

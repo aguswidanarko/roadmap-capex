@@ -108,6 +108,7 @@ function buildPondok1Buildings() {
       category_code: sign,
       estimasi_capital: capital, estimasi_unit: unit, estimasi_pintu: pintu,
       roadmap_year: sign === 'BB' ? 2026 : null,
+      biaya: sign === 'BB' ? 250000000 : 0,
       keterangan_af: null,
       latitude: baseLat + Math.sin(angle) * radius,
       longitude: baseLon + Math.cos(angle) * radius,

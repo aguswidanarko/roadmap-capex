@@ -4,6 +4,8 @@ const XLSX = require('xlsx');
 const crypto = require('crypto');
 const { db, logAudit } = require('./db');
 const { requireAuth, requireRole } = require('./auth');
+const { lookupKebunMeta } = require('./kebunMeta');
+const { normalizeJenisBangunan } = require('./jenisBangunanRemap');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -24,6 +26,20 @@ router.get('/master/subtypes', (req, res) => {
 router.get('/master/locations', (req, res) => {
   const rows = db.prepare('SELECT DISTINCT kebun, rayon, afdeling, blok FROM buildings WHERE deleted=0').all();
   res.json(rows);
+});
+// GET /master/regions - distinct regions present in the data, for the Region dropdown
+router.get('/master/regions', (req, res) => {
+  const rows = db.prepare(`SELECT DISTINCT region FROM buildings WHERE deleted=0 AND region IS NOT NULL AND region != '' ORDER BY region`).all();
+  res.json(rows.map((r) => r.region));
+});
+// GET /master/pts?region=... - distinct PT/Kebun present in the data, for the PT dropdown
+router.get('/master/pts', (req, res) => {
+  const { region } = req.query;
+  let sql = `SELECT DISTINCT pt FROM buildings WHERE deleted=0 AND pt IS NOT NULL AND pt != ''`;
+  const params = [];
+  if (region) { sql += ' AND region = ?'; params.push(region); }
+  sql += ' ORDER BY pt';
+  res.json(db.prepare(sql).all(...params).map((r) => r.pt));
 });
 router.get('/master/categories', (req, res) => {
   res.json([
@@ -48,7 +64,7 @@ function validateRow(row, seenKeys) {
   let isDuplicate = false;
   if (seenKeys.has(dupKey)) { errors.push('Duplicate: kombinasi lokasi + no unit sudah ada di file ini'); isDuplicate = true; }
   seenKeys.add(dupKey);
-  for (const f of ['unit', 'unit_count', 'pintu']) {
+  for (const f of ['unit', 'unit_count', 'pintu', 'biaya']) {
     if (row[f] !== undefined && row[f] !== '' && isNaN(Number(row[f]))) errors.push(`Field '${f}' harus angka`);
   }
   if (row.tahun_bangun && isNaN(Number(row.tahun_bangun))) errors.push('Tahun bangun harus angka');
@@ -96,23 +112,26 @@ router.post('/master/import/:batchId/commit', requireRole('admin', 'superadmin')
   const cached = previewCache.get(req.params.batchId);
   if (!cached) return res.status(404).json({ error: 'Batch not found or expired; re-upload the file' });
   const insertStmt = db.prepare(`INSERT INTO buildings
-    (uuid, no_unit, kebun, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
-     tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, keterangan_af,
+    (uuid, no_unit, kebun, region, pt, rayon, afdeling, blok, capital, building_type, subtype, unit_count, pintu,
+     tahun_bangun, category_code, estimasi_capital, estimasi_unit, estimasi_pintu, roadmap_year, biaya, keterangan_af,
      latitude, longitude, accuracy, progress_value, progress_date, progress_note, source, created_by, updated_by)
-    VALUES (@uuid,@no_unit,@kebun,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
-     @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@keterangan_af,
+    VALUES (@uuid,@no_unit,@kebun,@region,@pt,@rayon,@afdeling,@blok,@capital,@building_type,@subtype,@unit_count,@pintu,
+     @tahun_bangun,@category_code,@estimasi_capital,@estimasi_unit,@estimasi_pintu,@roadmap_year,@biaya,@keterangan_af,
      @latitude,@longitude,@accuracy,@progress_value,@progress_date,@progress_note,@source,@created_by,@updated_by)`);
   let committed = 0;
   const tx = db.transaction(() => {
     for (const r of cached.rows) {
       if (!r.valid) continue;
       const row = r.data;
+      const meta = lookupKebunMeta(row.kebun);
       insertStmt.run({
         uuid: crypto.randomUUID(),
         no_unit: String(row.no_unit ?? row['No Unit'] ?? ''),
-        kebun: row.kebun || null, rayon: row.rayon || null, afdeling: row.afdeling || null, blok: row.blok || null,
+        kebun: row.kebun || null,
+        region: row.region || meta.region || null, pt: row.pt || meta.pt || null,
+        rayon: row.rayon || null, afdeling: row.afdeling || null, blok: row.blok || null,
         capital: row.capital || row.building_type || null,
-        building_type: row.building_type || row.capital || null,
+        building_type: normalizeJenisBangunan(row.building_type || row.capital || null),
         subtype: row.subtype || row.capital || null,
         unit_count: Number(row.unit_count || row.unit || 1), pintu: Number(row.pintu || 0),
         tahun_bangun: row.tahun_bangun ? Number(row.tahun_bangun) : null,
@@ -120,6 +139,7 @@ router.post('/master/import/:batchId/commit', requireRole('admin', 'superadmin')
         estimasi_capital: row.estimasi_capital || row.capital || null,
         estimasi_unit: Number(row.estimasi_unit || row.unit_count || 1), estimasi_pintu: Number(row.estimasi_pintu || row.pintu || 0),
         roadmap_year: row.roadmap_year ? Number(row.roadmap_year) : null,
+        biaya: Number(row.biaya || 0),
         keterangan_af: row.keterangan_af || null,
         latitude: row.latitude ? Number(row.latitude) : null, longitude: row.longitude ? Number(row.longitude) : null,
         accuracy: row.accuracy ? Number(row.accuracy) : null,
